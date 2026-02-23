@@ -1,0 +1,61 @@
+{
+  "name": "move-harness",
+  "version": "0.1.0",
+  "description": "TypeScript framework for forking Aptos mainnet state and running simulated Move module tests",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:filter": "vitest run -t",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "aptos",
+    "move",
+    "simulation",
+    "fork",
+    "testing",
+    "mainnet",
+    "mev",
+    "defi",
+    "blockchain",
+    "web3"
+  ],
+  "author": "sh15h4nk",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sh15h4nk/move-harness.git"
+  },
+  "homepage": "https://github.com/sh15h4nk/move-harness#readme",
+  "bugs": {
+    "url": "https://github.com/sh15h4nk/move-harness/issues"
+  },
+  "packageManager": "pnpm@10.29.3",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@aptos-labs/ts-sdk": "^1.35.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
+  }
+}
