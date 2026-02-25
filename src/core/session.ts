@@ -182,6 +182,18 @@ export class SimulationSession {
   }
 
   /**
+   * Removes the build directory for a given package and untracks it.
+   */
+  private cleanBuildDir(packageDir: string, outputDir?: string): void {
+    const buildDir = path.resolve(outputDir ?? path.join(packageDir, "build"));
+    if (fs.existsSync(buildDir)) {
+      fs.rmSync(buildDir, { recursive: true, force: true });
+      this.log.detail("cleaned", buildDir);
+    }
+    this.buildDirs.delete(buildDir);
+  }
+
+  /**
    * Destroys the session and cleans up the session directory.
    *
    * If `persist` was set to `true` in the config, the session directory
@@ -332,6 +344,10 @@ export class SimulationSession {
       };
     } catch (err: any) {
       this.log.fail("compile", extractCliError(err), performance.now() - start);
+
+      // Clean up build artifacts on failure
+      this.cleanBuildDir(options.packageDir, options.outputDir);
+
       if (err.stderr) {
         this.log.detail("package", options.packageDir);
         this.log.blank();
@@ -408,6 +424,10 @@ export class SimulationSession {
     } catch (err) {
       const elapsed = performance.now() - start;
       this.log.fail("publish", extractCliError(err), elapsed);
+
+      // Clean up build artifacts on failure
+      this.cleanBuildDir(options.packageDir);
+
       this.log.blank();
       throw err;
     }
