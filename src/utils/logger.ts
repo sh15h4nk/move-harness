@@ -121,9 +121,11 @@ export class Logger {
     rawVmStatus?: string;
     abortCode?: string;
     location?: string;
+    message?: string;
+    category?: string;
+    reason?: number;
     functionId?: string;
     gasUsed?: number;
-    description?: string;
   }, ms?: number): void {
     if (!this.enabled) return;
     const sym = c(RED, "✗");
@@ -132,12 +134,17 @@ export class Logger {
     this.write(`${this.prefix()}  ${sym} ${t}  ${c(RED + BOLD, "VM ERROR")}${dur ? `  ${dur}` : ""}`);
 
     this.detail("status", info.vmStatus);
-    if (info.abortCode) this.detail("code", info.abortCode);
+    if (info.abortCode) {
+      const decoded = info.category
+        ? `${info.abortCode} (${info.category}, reason=${info.reason})`
+        : info.abortCode;
+      this.detail("code", decoded);
+    }
     if (info.location) this.detail("location", info.location);
+    if (info.message) this.detail("message", info.message);
     if (info.functionId) this.detail("function", shortFn(info.functionId));
     if (info.gasUsed != null) this.detail("gas used", info.gasUsed.toLocaleString());
-    if (info.description) this.detail("desc", info.description);
-    // Show the raw vm_status when it carries info beyond the parsed status
+    // Show the raw vm_status when it carries extra info beyond parsed fields
     if (info.rawVmStatus && info.rawVmStatus !== info.vmStatus) {
       this.detail("vm_status", info.rawVmStatus);
     }

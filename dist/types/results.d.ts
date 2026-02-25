@@ -30,8 +30,6 @@ export interface RunResult {
     success: boolean;
     /** VM status string (e.g. `"Executed successfully"` or `"Move abort..."`). */
     vmStatus?: string;
-    /** Human-readable error description from the VM, if available. */
-    description?: string;
     /** Gas units consumed. */
     gasUsed?: number;
     /** Events emitted during execution. */

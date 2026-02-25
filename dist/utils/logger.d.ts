@@ -48,9 +48,11 @@ export declare class Logger {
         rawVmStatus?: string;
         abortCode?: string;
         location?: string;
+        message?: string;
+        category?: string;
+        reason?: number;
         functionId?: string;
         gasUsed?: number;
-        description?: string;
     }, ms?: number): void;
     /** Print an indented key-value detail line beneath an operation. */
     detail(key: string, value: string): void;

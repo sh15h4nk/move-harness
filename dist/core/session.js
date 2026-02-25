@@ -525,9 +525,11 @@ class SimulationSession {
                 rawVmStatus: runResult.vmStatus,
                 abortCode: parsed.abortCode,
                 location: parsed.location,
+                message: parsed.message,
+                category: parsed.category,
+                reason: parsed.reason,
                 functionId: options.functionId,
                 gasUsed: runResult.gasUsed,
-                description: runResult.description,
             }, elapsed);
         }
         this.log.blank();
@@ -650,8 +652,10 @@ class SimulationSession {
                 rawVmStatus: runResult.vmStatus,
                 abortCode: parsed.abortCode,
                 location: parsed.location,
+                message: parsed.message,
+                category: parsed.category,
+                reason: parsed.reason,
                 gasUsed: runResult.gasUsed,
-                description: runResult.description,
             }, elapsed);
         }
         this.log.blank();
@@ -836,34 +840,120 @@ function formatNamedAddresses(addrs) {
         .join(",");
 }
 /**
+ * Aptos canonical error categories from `std::error`.
+ * Abort codes using canonical encoding: `(category << 16) | reason`.
+ */
+const ERROR_CATEGORIES = {
+    0x1: "INVALID_ARGUMENT",
+    0x2: "OUT_OF_RANGE",
+    0x3: "INVALID_STATE",
+    0x4: "UNAUTHENTICATED",
+    0x5: "PERMISSION_DENIED",
+    0x6: "NOT_FOUND",
+    0x7: "ABORTED",
+    0x8: "ALREADY_EXISTS",
+    0x9: "RESOURCE_EXHAUSTED",
+    0xA: "CANCELLED",
+    0xB: "INTERNAL",
+    0xC: "NOT_IMPLEMENTED",
+    0xD: "UNAVAILABLE",
+};
+/**
+ * Decodes a canonical Aptos abort code into category + reason.
+ * Returns undefined if the code doesn't use canonical encoding.
+ */
+function decodeAbortCode(code) {
+    const num = typeof code === "string" ? parseInt(code, code.startsWith("0x") ? 16 : 10) : code;
+    if (isNaN(num) || num < 0)
+        return undefined;
+    const cat = (num >> 16) & 0xFF;
+    const reason = num & 0xFFFF;
+    const name = ERROR_CATEGORIES[cat];
+    if (!name)
+        return undefined;
+    return { category: name, reason, hex: `0x${num.toString(16)}` };
+}
+/**
  * Parses a VM status string into structured components.
- * Handles formats like:
+ *
+ * The Aptos CLI `--session` mode formats VMStatus via its Display impl:
+ *   "status ABORTED of type Execution with sub status <code>"
+ *   "status ABORTED of type Execution with sub status <code> with message <msg>"
+ *   "status FUNCTION_RESOLUTION_FAILURE of type Verification with message <msg>"
+ *
+ * The REST API / remote simulation uses a different format:
  *   "Move abort in 0x1::coin: EINSUFFICIENT_BALANCE(0x10006)"
  *   "Move abort in 0x1::module: 0x10006"
- *   "status ABORTED of type Execution with sub status 5"
- *   "Execution failed with status: OUT_OF_GAS"
+ *
+ * And the KeptVMStatus Display (used in some contexts):
+ *   "ABORTED with code <code> and message <msg> in <location>"
+ *   "ABORTED with code <code> in <location>"
+ *   "EXECUTION_FAILURE at bytecode offset <off> in function index <fn> in <loc>"
  */
 function parseVmStatus(vmStatus) {
     if (!vmStatus)
         return { status: "unknown error" };
-    // Match: "Move abort in <location>: <code>"
+    // ── KeptVMStatus format (richer, includes location + message) ──
+    // "ABORTED with code <code> and message <msg> in <location>"
+    // "ABORTED with code <code> in <location>"
+    const keptAbortMatch = vmStatus.match(/^status\s+ABORTED\s+with\s+code\s+(\d+)(?:\s+and\s+message\s+(.+?))?\s+in\s+(.+)$/i);
+    if (keptAbortMatch) {
+        const decoded = decodeAbortCode(keptAbortMatch[1]);
+        return {
+            status: "ABORTED",
+            abortCode: keptAbortMatch[1],
+            message: keptAbortMatch[2] || undefined,
+            location: keptAbortMatch[3]?.trim() || undefined,
+            category: decoded?.category,
+            reason: decoded?.reason,
+        };
+    }
+    // "EXECUTION_FAILURE at bytecode offset <off> in function index <fn> in <loc> with error message <msg>"
+    const keptExecMatch = vmStatus.match(/EXECUTION_FAILURE\s+at\s+bytecode\s+offset\s+(\d+)\s+in\s+function\s+index\s+(\d+)\s+in\s+(.+?)(?:\s+with\s+error\s+message\s+(.+))?$/i);
+    if (keptExecMatch) {
+        return {
+            status: "EXECUTION_FAILURE",
+            location: keptExecMatch[3]?.trim() || undefined,
+            message: keptExecMatch[4]?.trim() || undefined,
+        };
+    }
+    // ── REST API format ──
+    // "Move abort in 0x1::coin: EINSUFFICIENT_BALANCE(0x10006)"
     const abortMatch = vmStatus.match(/Move abort(?:\s+in\s+(0x[a-fA-F0-9]+::\w+(?:::\w+)?))?[:\s]+(.+)/i);
     if (abortMatch) {
+        const rawCode = abortMatch[2]?.trim();
+        const decoded = rawCode ? decodeAbortCode(rawCode) : undefined;
         return {
             status: "Move abort",
             location: abortMatch[1] || undefined,
-            abortCode: abortMatch[2]?.trim() || undefined,
+            abortCode: rawCode || undefined,
+            category: decoded?.category,
+            reason: decoded?.reason,
         };
     }
-    // Match: "status ABORTED of type Execution with sub status <code>"
-    const abortedMatch = vmStatus.match(/status\s+ABORTED\s+of\s+type\s+\w+\s+with\s+sub\s+status\s+(\d+)/i);
-    if (abortedMatch) {
+    // ── VMStatus Display format (session mode) ──
+    // "status ABORTED of type Execution with sub status <code>"
+    // "status ABORTED of type Execution with sub status <code> with message <msg>"
+    const sessionAbortMatch = vmStatus.match(/status\s+ABORTED\s+of\s+type\s+\w+\s+with\s+sub\s+status\s+(\d+)(?:\s+with\s+message\s+(.+))?$/i);
+    if (sessionAbortMatch) {
+        const decoded = decodeAbortCode(sessionAbortMatch[1]);
         return {
             status: "ABORTED",
-            abortCode: abortedMatch[1],
+            abortCode: sessionAbortMatch[1],
+            message: sessionAbortMatch[2]?.trim() || undefined,
+            category: decoded?.category,
+            reason: decoded?.reason,
         };
     }
-    // Match: "Execution failed with status: <status>"
+    // "status <CODE> of type <type> with message <msg>"  (e.g. FUNCTION_RESOLUTION_FAILURE)
+    const sessionErrorMatch = vmStatus.match(/status\s+(\w+)\s+of\s+type\s+\w+(?:\s+with\s+message\s+(.+))?$/i);
+    if (sessionErrorMatch) {
+        return {
+            status: sessionErrorMatch[1],
+            message: sessionErrorMatch[2]?.trim() || undefined,
+        };
+    }
+    // ── Fallback: "Execution failed with status: <status>" ──
     const execMatch = vmStatus.match(/failed.*?:\s*(.+)/i);
     if (execMatch) {
         return { status: execMatch[1].trim() };
@@ -877,7 +967,6 @@ function parseRunResult(stdout, stderr) {
         return {
             success: txResult?.success ?? false,
             vmStatus: txResult?.vm_status,
-            description: txResult?.description ?? txResult?.error_description,
             gasUsed: txResult?.gas_used != null ? Number(txResult.gas_used) : undefined,
             events: txResult?.events,
             changes: txResult?.changes,
