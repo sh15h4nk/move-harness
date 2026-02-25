@@ -511,7 +511,7 @@ class SimulationSession {
             this.log.blank();
             throw err;
         }
-        const runResult = parseRunResult(result.stdout);
+        const runResult = parseRunResult(result.stdout, result.stderr);
         const elapsed = performance.now() - start;
         if (runResult.success) {
             this.log.done("run", "Success", elapsed);
@@ -522,10 +522,12 @@ class SimulationSession {
             const parsed = parseVmStatus(runResult.vmStatus);
             this.log.vmError({
                 vmStatus: parsed.status,
+                rawVmStatus: runResult.vmStatus,
                 abortCode: parsed.abortCode,
                 location: parsed.location,
                 functionId: options.functionId,
                 gasUsed: runResult.gasUsed,
+                description: runResult.description,
             }, elapsed);
         }
         this.log.blank();
@@ -634,7 +636,7 @@ class SimulationSession {
             this.log.blank();
             throw err;
         }
-        const runResult = parseRunResult(result.stdout);
+        const runResult = parseRunResult(result.stdout, result.stderr);
         const elapsed = performance.now() - start;
         if (runResult.success) {
             this.log.done("script", "Success", elapsed);
@@ -645,9 +647,11 @@ class SimulationSession {
             const parsed = parseVmStatus(runResult.vmStatus);
             this.log.vmError({
                 vmStatus: parsed.status,
+                rawVmStatus: runResult.vmStatus,
                 abortCode: parsed.abortCode,
                 location: parsed.location,
                 gasUsed: runResult.gasUsed,
+                description: runResult.description,
             }, elapsed);
         }
         this.log.blank();
@@ -836,6 +840,7 @@ function formatNamedAddresses(addrs) {
  * Handles formats like:
  *   "Move abort in 0x1::coin: EINSUFFICIENT_BALANCE(0x10006)"
  *   "Move abort in 0x1::module: 0x10006"
+ *   "status ABORTED of type Execution with sub status 5"
  *   "Execution failed with status: OUT_OF_GAS"
  */
 function parseVmStatus(vmStatus) {
@@ -850,6 +855,14 @@ function parseVmStatus(vmStatus) {
             abortCode: abortMatch[2]?.trim() || undefined,
         };
     }
+    // Match: "status ABORTED of type Execution with sub status <code>"
+    const abortedMatch = vmStatus.match(/status\s+ABORTED\s+of\s+type\s+\w+\s+with\s+sub\s+status\s+(\d+)/i);
+    if (abortedMatch) {
+        return {
+            status: "ABORTED",
+            abortCode: abortedMatch[1],
+        };
+    }
     // Match: "Execution failed with status: <status>"
     const execMatch = vmStatus.match(/failed.*?:\s*(.+)/i);
     if (execMatch) {
@@ -857,17 +870,19 @@ function parseVmStatus(vmStatus) {
     }
     return { status: vmStatus };
 }
-function parseRunResult(stdout) {
+function parseRunResult(stdout, stderr) {
     try {
         const parsed = (0, parser_1.parseJsonOutput)(stdout);
         const txResult = parsed?.Result;
         return {
             success: txResult?.success ?? false,
             vmStatus: txResult?.vm_status,
+            description: txResult?.description ?? txResult?.error_description,
             gasUsed: txResult?.gas_used != null ? Number(txResult.gas_used) : undefined,
             events: txResult?.events,
             changes: txResult?.changes,
             raw: stdout,
+            stderr: stderr || undefined,
         };
     }
     catch {
@@ -878,6 +893,7 @@ function parseRunResult(stdout) {
             events: undefined,
             changes: undefined,
             raw: stdout,
+            stderr: stderr || undefined,
         };
     }
 }

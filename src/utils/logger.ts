@@ -118,10 +118,12 @@ export class Logger {
    */
   vmError(info: {
     vmStatus: string;
+    rawVmStatus?: string;
     abortCode?: string;
     location?: string;
     functionId?: string;
     gasUsed?: number;
+    description?: string;
   }, ms?: number): void {
     if (!this.enabled) return;
     const sym = c(RED, "✗");
@@ -134,6 +136,11 @@ export class Logger {
     if (info.location) this.detail("location", info.location);
     if (info.functionId) this.detail("function", shortFn(info.functionId));
     if (info.gasUsed != null) this.detail("gas used", info.gasUsed.toLocaleString());
+    if (info.description) this.detail("desc", info.description);
+    // Show the raw vm_status when it carries info beyond the parsed status
+    if (info.rawVmStatus && info.rawVmStatus !== info.vmStatus) {
+      this.detail("vm_status", info.rawVmStatus);
+    }
   }
 
   /** Print an indented key-value detail line beneath an operation. */

@@ -127,6 +127,12 @@ class Logger {
             this.detail("function", shortFn(info.functionId));
         if (info.gasUsed != null)
             this.detail("gas used", info.gasUsed.toLocaleString());
+        if (info.description)
+            this.detail("desc", info.description);
+        // Show the raw vm_status when it carries info beyond the parsed status
+        if (info.rawVmStatus && info.rawVmStatus !== info.vmStatus) {
+            this.detail("vm_status", info.rawVmStatus);
+        }
     }
     /** Print an indented key-value detail line beneath an operation. */
     detail(key, value) {

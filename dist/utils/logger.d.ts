@@ -45,10 +45,12 @@ export declare class Logger {
      */
     vmError(info: {
         vmStatus: string;
+        rawVmStatus?: string;
         abortCode?: string;
         location?: string;
         functionId?: string;
         gasUsed?: number;
+        description?: string;
     }, ms?: number): void;
     /** Print an indented key-value detail line beneath an operation. */
     detail(key: string, value: string): void;
