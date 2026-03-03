@@ -23,6 +23,9 @@ export type {
   ViewResult,
   FundResult,
   ViewResourceResult,
+  BalanceChange,
+  ResourceChange,
+  EmittedEvent,
 } from "./types/results";
 
 // Types — Errors

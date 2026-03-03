@@ -1,3 +1,4 @@
+import type { BalanceChange, ResourceChange, EmittedEvent } from "../types/results";
 /** Shorten an address to `0xab12…cd34` */
 export declare function shortAddr(addr: string): string;
 /** Extract `module::function` from a full function ID. */
@@ -54,6 +55,14 @@ export declare class Logger {
         functionId?: string;
         gasUsed?: number;
     }, ms?: number): void;
+    /** Log inferred module trace from a transaction. */
+    moduleTrace(modules: string[]): void;
+    /** Log balance changes from a transaction. */
+    balanceChanges(changes: BalanceChange[]): void;
+    /** Log emitted events from a transaction. */
+    events(events: EmittedEvent[]): void;
+    /** Log resource changes summary from a transaction. */
+    resourceChanges(changes: ResourceChange[]): void;
     /** Print an indented key-value detail line beneath an operation. */
     detail(key: string, value: string): void;
     /** Print a blank separator line. */

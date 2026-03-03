@@ -1,7 +1,7 @@
 export { SimulationSession } from "./core/session";
 export type { GeneratedAccount } from "./core/session";
 export type { SessionConfig, CompileOptions, PublishOptions, RunOptions, ViewOptions, RunScriptOptions, FundOptions, ViewResourceOptions, Network, } from "./types/config";
-export type { CompileResult, PublishResult, RunResult, ViewResult, FundResult, ViewResourceResult, } from "./types/results";
+export type { CompileResult, PublishResult, RunResult, ViewResult, FundResult, ViewResourceResult, BalanceChange, ResourceChange, EmittedEvent, } from "./types/results";
 export { HarnessError, CliExecutionError, CliParseError, CompilationError, SimulationAbortError, SessionDestroyedError, } from "./types/errors";
 export { MoveArg } from "./utils/args";
 /**

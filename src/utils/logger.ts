@@ -1,3 +1,5 @@
+import type { BalanceChange, ResourceChange, EmittedEvent } from "../types/results";
+
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
@@ -6,6 +8,7 @@ const RED = "\x1b[31m";
 const CYAN = "\x1b[36m";
 const YELLOW = "\x1b[33m";
 const WHITE = "\x1b[37m";
+const MAGENTA = "\x1b[35m";
 
 const useColor = process.stderr.isTTY ?? false;
 
@@ -147,6 +150,65 @@ export class Logger {
     // Show the raw vm_status when it carries extra info beyond parsed fields
     if (info.rawVmStatus && info.rawVmStatus !== info.vmStatus) {
       this.detail("vm_status", info.rawVmStatus);
+    }
+  }
+
+  /** Log inferred module trace from a transaction. */
+  moduleTrace(modules: string[]): void {
+    if (!this.enabled || modules.length === 0) return;
+    const pipe = c(DIM, "│");
+    this.write(`${this.prefix()}  ${pipe}   ${c(MAGENTA, "trace")} ${c(DIM, `(${modules.length} modules)`)}`);
+    for (let i = 0; i < modules.length; i++) {
+      const arrow = i === 0 ? "→" : "↳";
+      const mod = modules[i].split("::").length >= 2
+        ? `${shortAddr(modules[i].split("::")[0])}::${modules[i].split("::")[1]}`
+        : modules[i];
+      this.write(`${this.prefix()}  ${pipe}     ${c(DIM, arrow)} ${c(CYAN, mod)}`);
+    }
+  }
+
+  /** Log balance changes from a transaction. */
+  balanceChanges(changes: BalanceChange[]): void {
+    if (!this.enabled || changes.length === 0) return;
+    const pipe = c(DIM, "│");
+    this.write(`${this.prefix()}  ${pipe}   ${c(MAGENTA, "balances")}`);
+    for (const bc of changes) {
+      const coin = bc.coinType.split("::").pop() ?? bc.coinType;
+      this.write(`${this.prefix()}  ${pipe}     ${shortAddr(bc.address)}  ${coin}  ${c(BOLD, bc.amount)}`);
+    }
+  }
+
+  /** Log emitted events from a transaction. */
+  events(events: EmittedEvent[]): void {
+    if (!this.enabled || events.length === 0) return;
+    const pipe = c(DIM, "│");
+    this.write(`${this.prefix()}  ${pipe}   ${c(MAGENTA, "events")} ${c(DIM, `(${events.length})`)}`);
+    for (const ev of events) {
+      const evType = ev.type.split("::").slice(-2).join("::");
+      const summary = typeof ev.data === "object" && ev.data !== null
+        ? Object.entries(ev.data as Record<string, unknown>).map(([k, v]) => `${k}=${v}`).join(" ")
+        : String(ev.data ?? "");
+      const addr = ev.address ? `${shortAddr(ev.address)} ` : "";
+      this.write(`${this.prefix()}  ${pipe}     ${addr}${c(CYAN, evType)}  ${c(DIM, summary)}`);
+    }
+  }
+
+  /** Log resource changes summary from a transaction. */
+  resourceChanges(changes: ResourceChange[]): void {
+    if (!this.enabled || changes.length === 0) return;
+    const pipe = c(DIM, "│");
+    const counts: Record<string, number> = {};
+    for (const rc of changes) {
+      counts[rc.type] = (counts[rc.type] ?? 0) + 1;
+    }
+    const summary = Object.entries(counts).map(([t, n]) => `${t}=${n}`).join(" ");
+    this.write(`${this.prefix()}  ${pipe}   ${c(MAGENTA, "changes")} ${c(DIM, summary)}`);
+    for (const rc of changes) {
+      if (rc.resourceType) {
+        const short = rc.resourceType.split("::").slice(-2).join("::").split("<")[0];
+        const addr = rc.address ? `${shortAddr(rc.address)} ` : "";
+        this.write(`${this.prefix()}  ${pipe}     ${c(DIM, rc.type.replace("write_", "W ").replace("delete_", "D "))} ${addr}${short}`);
+      }
     }
   }
 

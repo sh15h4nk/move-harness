@@ -43,6 +43,57 @@ const executor_1 = require("../cli/executor");
 const parser_1 = require("../cli/parser");
 const logger_1 = require("../utils/logger");
 const errors_1 = require("../types/errors");
+// ──────────────────────────────────────────────
+//  Session Registry & Signal Handling
+// ──────────────────────────────────────────────
+const activeSessions = new Set();
+let signalHandlersInstalled = false;
+let cleaningUp = false;
+function registerSession(session) {
+    activeSessions.add(session);
+    installSignalHandlers();
+}
+function unregisterSession(session) {
+    activeSessions.delete(session);
+}
+function installSignalHandlers() {
+    if (signalHandlersInstalled)
+        return;
+    signalHandlersInstalled = true;
+    const shutdownLog = new logger_1.Logger(true);
+    const cleanup = async (signal) => {
+        if (cleaningUp) {
+            // Second signal — force exit immediately
+            shutdownLog.fail("shutdown", "Forced exit");
+            process.exit(1);
+        }
+        cleaningUp = true;
+        const count = activeSessions.size;
+        if (count === 0) {
+            process.exit(signal === "SIGINT" ? 130 : 143);
+            return;
+        }
+        shutdownLog.step("shutdown", `Interrupted — cleaning up ${count} session(s)...`);
+        const sessions = [...activeSessions];
+        await Promise.allSettled(sessions.map((s) => s.destroy()));
+        shutdownLog.done("shutdown", "Cleanup complete");
+        process.exit(signal === "SIGINT" ? 130 : 143);
+    };
+    process.on("SIGINT", () => cleanup("SIGINT"));
+    process.on("SIGTERM", () => cleanup("SIGTERM"));
+    // Handle uncaught errors — attempt cleanup before crashing
+    process.on("uncaughtException", async (err) => {
+        if (cleaningUp)
+            return;
+        cleaningUp = true;
+        const sessions = [...activeSessions];
+        if (sessions.length > 0) {
+            shutdownLog.step("shutdown", "Uncaught exception — cleaning up sessions...");
+            await Promise.allSettled(sessions.map((s) => s.destroy()));
+        }
+        throw err;
+    });
+}
 /**
  * A simulation session that forks Aptos network state for local testing.
  *
@@ -139,6 +190,7 @@ class SimulationSession {
         const resolved = resolveConfig(config);
         const session = new SimulationSession(resolved);
         await session.init();
+        registerSession(session);
         return session;
     }
     // ──────────────────────────────────────────────
@@ -196,6 +248,7 @@ class SimulationSession {
         if (this.destroyed)
             return;
         this.destroyed = true;
+        unregisterSession(this);
         this.log.step("destroy", "Cleaning up session");
         // Remove build artifacts created by compile()
         for (const dir of this.buildDirs) {
@@ -517,6 +570,14 @@ class SimulationSession {
             this.log.done("run", "Success", elapsed);
             if (runResult.gasUsed != null)
                 this.log.detail("gas", runResult.gasUsed.toLocaleString());
+            if (runResult.moduleTrace)
+                this.log.moduleTrace(runResult.moduleTrace);
+            if (runResult.balanceChanges)
+                this.log.balanceChanges(runResult.balanceChanges);
+            if (runResult.parsedEvents)
+                this.log.events(runResult.parsedEvents);
+            if (runResult.resourceChanges)
+                this.log.resourceChanges(runResult.resourceChanges);
         }
         else {
             const parsed = parseVmStatus(runResult.vmStatus);
@@ -644,6 +705,14 @@ class SimulationSession {
             this.log.done("script", "Success", elapsed);
             if (runResult.gasUsed != null)
                 this.log.detail("gas", runResult.gasUsed.toLocaleString());
+            if (runResult.moduleTrace)
+                this.log.moduleTrace(runResult.moduleTrace);
+            if (runResult.balanceChanges)
+                this.log.balanceChanges(runResult.balanceChanges);
+            if (runResult.parsedEvents)
+                this.log.events(runResult.parsedEvents);
+            if (runResult.resourceChanges)
+                this.log.resourceChanges(runResult.resourceChanges);
         }
         else {
             const parsed = parseVmStatus(runResult.vmStatus);
@@ -960,16 +1029,152 @@ function parseVmStatus(vmStatus) {
     }
     return { status: vmStatus };
 }
+/**
+ * Extracts balance changes and resource changes from the transaction's `changes` array.
+ *
+ * The Aptos CLI returns changes in this shape:
+ *   { type: "write_resource", address: "0x...", data: { type: "0x1::coin::CoinStore<...>", data: { coin: { value: "..." } } } }
+ *   { type: "write_table_item", handle: "...", key: "...", value: "..." }
+ *   { type: "delete_resource", address: "0x...", resource: "..." }
+ */
+function parseChanges(changes) {
+    const balanceChanges = [];
+    const resourceChanges = [];
+    for (const change of changes) {
+        if (typeof change !== "object" || change === null)
+            continue;
+        const c = change;
+        const changeType = c.type;
+        if (changeType === "write_resource") {
+            const address = c.address;
+            const resType = c.data?.type;
+            const resData = c.data?.data;
+            resourceChanges.push({
+                type: "write_resource",
+                address,
+                resourceType: resType,
+            });
+            // Extract balance from CoinStore writes
+            if (resType && /::coin::CoinStore</.test(resType) && resData?.coin?.value != null) {
+                const coinTypeMatch = resType.match(/::coin::CoinStore<(.+)>$/);
+                if (coinTypeMatch) {
+                    balanceChanges.push({
+                        address,
+                        coinType: coinTypeMatch[1],
+                        amount: String(resData.coin.value),
+                    });
+                }
+            }
+        }
+        else if (changeType === "delete_resource") {
+            resourceChanges.push({
+                type: "delete_resource",
+                address: c.address,
+                resourceType: c.resource ?? c.data?.type,
+            });
+        }
+        else if (changeType === "write_module") {
+            resourceChanges.push({
+                type: "write_module",
+                address: c.address,
+            });
+        }
+        else if (changeType === "write_table_item") {
+            resourceChanges.push({
+                type: "write_table_item",
+                handle: c.handle,
+                key: c.key,
+            });
+        }
+        else if (changeType === "delete_table_item") {
+            resourceChanges.push({
+                type: "delete_table_item",
+                handle: c.handle,
+                key: c.key,
+            });
+        }
+    }
+    return { balanceChanges, resourceChanges };
+}
+/**
+ * Extracts structured events from the transaction's `events` array.
+ *
+ * Events from the Aptos CLI look like:
+ *   { type: "0x1::coin::WithdrawEvent", guid: { account_address: "0x...", creation_number: "..." }, sequence_number: "0", data: { amount: "1000" } }
+ */
+function parseEvents(events) {
+    const parsed = [];
+    for (const event of events) {
+        if (typeof event !== "object" || event === null)
+            continue;
+        const e = event;
+        parsed.push({
+            type: e.type ?? "unknown",
+            data: e.data,
+            sequenceNumber: e.sequence_number,
+            address: e.guid?.account_address,
+        });
+    }
+    return parsed;
+}
+/**
+ * Builds an ordered module trace from events and changes.
+ * Extracts `address::module` identifiers from event types and resource types,
+ * preserving first-seen order to approximate the call sequence.
+ */
+function buildModuleTrace(events, resourceChanges) {
+    const seen = new Set();
+    const trace = [];
+    const add = (moduleId) => {
+        if (!seen.has(moduleId)) {
+            seen.add(moduleId);
+            trace.push(moduleId);
+        }
+    };
+    // Events reflect execution order — process them first
+    if (events) {
+        for (const ev of events) {
+            // Event type: "0x1::coin::WithdrawEvent" → "0x1::coin"
+            const parts = ev.type.split("::");
+            if (parts.length >= 2) {
+                add(`${parts[0]}::${parts[1]}`);
+            }
+        }
+    }
+    // Resource changes add modules not seen in events
+    if (resourceChanges) {
+        for (const rc of resourceChanges) {
+            if (rc.resourceType) {
+                const parts = rc.resourceType.split("::");
+                if (parts.length >= 2) {
+                    add(`${parts[0]}::${parts[1]}`);
+                }
+            }
+        }
+    }
+    return trace;
+}
 function parseRunResult(stdout, stderr) {
     try {
         const parsed = (0, parser_1.parseJsonOutput)(stdout);
         const txResult = parsed?.Result;
+        const events = txResult?.events;
+        const changes = txResult?.changes;
+        const { balanceChanges, resourceChanges } = Array.isArray(changes)
+            ? parseChanges(changes)
+            : { balanceChanges: undefined, resourceChanges: undefined };
+        const parsedEvents = Array.isArray(events) ? parseEvents(events) : undefined;
+        const moduleTrace = buildModuleTrace(parsedEvents?.length ? parsedEvents : undefined, resourceChanges?.length ? resourceChanges : undefined);
         return {
             success: txResult?.success ?? false,
             vmStatus: txResult?.vm_status,
             gasUsed: txResult?.gas_used != null ? Number(txResult.gas_used) : undefined,
-            events: txResult?.events,
-            changes: txResult?.changes,
+            events,
+            changes,
+            balanceChanges: balanceChanges?.length ? balanceChanges : undefined,
+            resourceChanges: resourceChanges?.length ? resourceChanges : undefined,
+            parsedEvents: parsedEvents?.length ? parsedEvents : undefined,
+            moduleTrace: moduleTrace.length ? moduleTrace : undefined,
             raw: stdout,
             stderr: stderr || undefined,
         };
